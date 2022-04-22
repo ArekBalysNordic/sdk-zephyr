@@ -93,6 +93,7 @@ int settings_load_subtree_direct(
  */
 int settings_save_one(const char *name, const void *value, size_t val_len)
 {
+	LOG_ERR("---------------------------> Stored settings: %s with size: %zu", name, val_len);
 	int rc;
 	struct settings_store *cs;
 
