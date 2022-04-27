@@ -921,6 +921,8 @@ ssize_t nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len)
 	uint16_t required_space = 0U; /* no space, appropriate for delete ate */
 	bool prev_found = false;
 
+	LOG_ERR(">>>>%zu;", len);
+
 	if (!fs->ready) {
 		LOG_ERR("NVS not initialized");
 		return -EACCES;
