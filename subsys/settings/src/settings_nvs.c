@@ -311,6 +311,22 @@ found:
 		return rc;
 	}
 
+	int data_to_save = 0;
+	uint8_t metadata = 0;
+
+	size_t aligned_value_len = (val_len + (sizeof(uint32_t) - (val_len % sizeof(uint32_t))));
+
+	if(write_name){
+		metadata = 16;
+		size_t aligned_name_len =  (strlen(name) + (sizeof(uint32_t) - (strlen(name) % sizeof(uint32_t))));
+		data_to_save = aligned_name_len + aligned_value_len + metadata;
+	}else{
+		metadata = 8;
+		data_to_save = aligned_value_len + metadata;
+	}
+
+	LOG_ERR(">>>%s;%zu;%zu;%d;%u;%d;%d", name, strlen(name), val_len, write_name, metadata,rc, data_to_save);
+
 	return 0;
 }
 
