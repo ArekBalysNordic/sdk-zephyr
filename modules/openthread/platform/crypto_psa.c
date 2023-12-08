@@ -18,6 +18,32 @@
 #include <string.h>
 #endif
 
+#ifndef HUK_HAS_KMU
+#include <zephyr/sys/reboot.h>
+#endif
+
+#ifdef CONFIG_SECURE_STORAGE_BACKEND_AEAD_KEY_DERIVE_FROM_HUK
+// #include <zephyr/logging/log.h>
+#include <nrf_cc3xx_platform.h>
+#include <hw_unique_key.h>
+
+int write_huk(void)
+{
+	if (!hw_unique_key_are_any_written()) {
+		int result = hw_unique_key_write_random();
+
+		if (result != HW_UNIQUE_KEY_SUCCESS) {
+			return 0;
+		}
+#if !defined(HUK_HAS_KMU)
+		sys_reboot(0);
+#endif /* !defined(HUK_HAS_KMU) */
+	}
+
+	return 0;
+}
+#endif /* CONFIG_SECURE_STORAGE_BACKEND_AEAD_KEY_DERIVE_FROM_HUK */
+
 static otError psaToOtError(psa_status_t aStatus)
 {
 	switch (aStatus) {
@@ -58,7 +84,7 @@ static psa_algorithm_t toPsaAlgorithm(otCryptoKeyAlgorithm aAlgorithm)
 		 * There is currently no constant like PSA_ALG_NONE, but 0 is used
 		 * to indicate an unknown algorithm.
 		 */
-		return (psa_algorithm_t) 0;
+		return (psa_algorithm_t)0;
 	}
 }
 
@@ -88,10 +114,8 @@ static psa_key_usage_t toPsaKeyUsage(int aUsage)
 static bool checkKeyUsage(int aUsage)
 {
 	/* Check if only supported flags have been passed */
-	int supported_flags = OT_CRYPTO_KEY_USAGE_EXPORT |
-			      OT_CRYPTO_KEY_USAGE_ENCRYPT |
-			      OT_CRYPTO_KEY_USAGE_DECRYPT |
-			      OT_CRYPTO_KEY_USAGE_SIGN_HASH;
+	int supported_flags = OT_CRYPTO_KEY_USAGE_EXPORT | OT_CRYPTO_KEY_USAGE_ENCRYPT |
+			      OT_CRYPTO_KEY_USAGE_DECRYPT | OT_CRYPTO_KEY_USAGE_SIGN_HASH;
 
 	return (aUsage & ~supported_flags) == 0;
 }
@@ -137,17 +161,18 @@ void otPlatCryptoInit(void)
 	 * PSA with emulated TFM, Settings have to be initialized at the end of otPlatCryptoInit(),
 	 * to be available before storing Network Key.
 	 */
-	__ASSERT_EVAL((void) settings_subsys_init(), int err = settings_subsys_init(),
-		      !err, "Failed to initialize settings");
+	__ASSERT_EVAL((void)settings_subsys_init(), int err = settings_subsys_init(), !err,
+		      "Failed to initialize settings");
+#endif
+
+#ifdef CONFIG_SECURE_STORAGE_BACKEND_AEAD_KEY_DERIVE_FROM_HUK
+	write_huk();
 #endif
 }
 
-otError otPlatCryptoImportKey(otCryptoKeyRef *aKeyRef,
-			      otCryptoKeyType aKeyType,
-			      otCryptoKeyAlgorithm aKeyAlgorithm,
-			      int aKeyUsage,
-			      otCryptoKeyStorage aKeyPersistence,
-			      const uint8_t *aKey,
+otError otPlatCryptoImportKey(otCryptoKeyRef *aKeyRef, otCryptoKeyType aKeyType,
+			      otCryptoKeyAlgorithm aKeyAlgorithm, int aKeyUsage,
+			      otCryptoKeyStorage aKeyPersistence, const uint8_t *aKey,
 			      size_t aKeyLen)
 {
 	psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
@@ -177,9 +202,7 @@ otError otPlatCryptoImportKey(otCryptoKeyRef *aKeyRef,
 	return psaToOtError(status);
 }
 
-otError otPlatCryptoExportKey(otCryptoKeyRef aKeyRef,
-			      uint8_t *aBuffer,
-			      size_t aBufferLen,
+otError otPlatCryptoExportKey(otCryptoKeyRef aKeyRef, uint8_t *aBuffer, size_t aBufferLen,
 			      size_t *aKeyLen)
 {
 	if (aBuffer == NULL) {
@@ -253,8 +276,7 @@ otError otPlatCryptoHmacSha256Start(otCryptoContext *aContext, const otCryptoKey
 	return psaToOtError(status);
 }
 
-otError otPlatCryptoHmacSha256Update(otCryptoContext *aContext,
-				     const void *aBuf,
+otError otPlatCryptoHmacSha256Update(otCryptoContext *aContext, const void *aBuf,
 				     uint16_t aBufLength)
 {
 	psa_mac_operation_t *operation;
@@ -265,7 +287,7 @@ otError otPlatCryptoHmacSha256Update(otCryptoContext *aContext,
 
 	operation = aContext->mContext;
 
-	return psaToOtError(psa_mac_update(operation, (const uint8_t *) aBuf, aBufLength));
+	return psaToOtError(psa_mac_update(operation, (const uint8_t *)aBuf, aBufLength));
 }
 
 otError otPlatCryptoHmacSha256Finish(otCryptoContext *aContext, uint8_t *aBuf, size_t aBufLength)
@@ -291,7 +313,7 @@ otError otPlatCryptoAesInit(otCryptoContext *aContext)
 	}
 
 	key_ref = aContext->mContext;
-	*key_ref = (psa_key_id_t) 0; /* In TF-M 1.5.0 this can be replaced with PSA_KEY_ID_NULL */
+	*key_ref = (psa_key_id_t)0; /* In TF-M 1.5.0 this can be replaced with PSA_KEY_ID_NULL */
 
 	return OT_ERROR_NONE;
 }
@@ -335,20 +357,14 @@ otError otPlatCryptoAesEncrypt(otCryptoContext *aContext, const uint8_t *aInput,
 		goto out;
 	}
 
-	status = psa_cipher_update(&operation,
-				   aInput,
-				   block_size,
-				   aOutput,
-				   block_size,
+	status = psa_cipher_update(&operation, aInput, block_size, aOutput, block_size,
 				   &cipher_length);
 
 	if (status != PSA_SUCCESS) {
 		goto out;
 	}
 
-	status = psa_cipher_finish(&operation,
-				   aOutput + cipher_length,
-				   block_size - cipher_length,
+	status = psa_cipher_finish(&operation, aOutput + cipher_length, block_size - cipher_length,
 				   &cipher_length);
 
 out:
@@ -411,7 +427,7 @@ otError otPlatCryptoSha256Update(otCryptoContext *aContext, const void *aBuf, ui
 
 	operation = aContext->mContext;
 
-	return psaToOtError(psa_hash_update(operation, (const uint8_t *) aBuf, aBufLength));
+	return psaToOtError(psa_hash_update(operation, (const uint8_t *)aBuf, aBufLength));
 }
 
 otError otPlatCryptoSha256Finish(otCryptoContext *aContext, uint8_t *aHash, uint16_t aHashSize)
