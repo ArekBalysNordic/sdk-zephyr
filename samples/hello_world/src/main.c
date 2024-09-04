@@ -1,14 +1,24 @@
 /*
- * Copyright (c) 2012-2014 Wind River Systems, Inc.
+ * Copyright (c) Nordic Semiconductor ASA. All Rights Reserved.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * The information contained herein is confidential property of Nordic Semiconductor ASA.
+ * The use, copying, transfer or disclosure of such information is prohibited except by
+ * express written agreement with Nordic Semiconductor ASA.
  */
 
-#include <stdio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/poweroff.h>
 
 int main(void)
 {
-	printf("Hello World! %s\n", CONFIG_BOARD_TARGET);
+	k_sleep(K_MSEC(1000));
+
+	volatile int i = 10000000;
+	while(i){
+		i--;
+	}
+
+	sys_poweroff();
 
 	return 0;
 }
