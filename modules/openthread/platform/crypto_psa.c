@@ -19,6 +19,53 @@
 #include <mbedtls/asn1.h>
 #endif
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+#include <cracen_psa_kmu.h>
+
+#define OPENTHREAD_KMU_OFFSET           (80)
+#define OPENTHREAD_SINGLE_KEY_SLOT_SIZE (2)
+#ifndef OPENTHREAD_CONFIG_PSA_ITS_NVM_OFFSET
+#define OPENTHREAD_CONFIG_PSA_ITS_NVM_OFFSET (0x20000)
+#define OPENTHREAD_CONFIG_PSA_ITS_NVM_MAX    (8)
+#endif
+
+static psa_status_t toKmuSlot(otCryptoKeyRef *key_id, psa_key_attributes_t *attributes)
+{
+	if (!key_id) {
+		return PSA_ERROR_INVALID_ARGUMENT;
+	}
+
+	if (*key_id < OPENTHREAD_CONFIG_PSA_ITS_NVM_OFFSET ||
+	    *key_id > OPENTHREAD_CONFIG_PSA_ITS_NVM_OFFSET + OPENTHREAD_CONFIG_PSA_ITS_NVM_MAX) {
+		return PSA_SUCCESS;
+	}
+
+	*key_id = PSA_KEY_HANDLE_FROM_CRACEN_KMU_SLOT(
+		CRACEN_KMU_KEY_USAGE_SCHEME_RAW,
+		OPENTHREAD_KMU_OFFSET + (OPENTHREAD_SINGLE_KEY_SLOT_SIZE *
+					 ((*key_id - OPENTHREAD_CONFIG_PSA_ITS_NVM_OFFSET) - 1)));
+	if (attributes) {
+		psa_set_key_lifetime(attributes, PSA_KEY_LIFETIME_FROM_PERSISTENCE_AND_LOCATION(
+							 PSA_KEY_PERSISTENCE_DEFAULT,
+							 PSA_KEY_LOCATION_CRACEN_KMU));
+
+		/* Convert to a type which KMU supports */
+		if (psa_get_key_type(attributes) == PSA_KEY_TYPE_RAW_DATA) {
+			psa_set_key_type(attributes, PSA_KEY_TYPE_AES);
+		} else if (psa_get_key_type(attributes) == PSA_KEY_TYPE_AES) {
+			psa_set_key_type(attributes, PSA_KEY_TYPE_RAW_DATA);
+		}
+		if (psa_get_key_algorithm(attributes) == 0) {
+			psa_set_key_algorithm(attributes, PSA_ALG_GCM);
+		} else if (psa_get_key_algorithm(attributes) == PSA_ALG_GCM) {
+			psa_set_key_algorithm(attributes, 0);
+		}
+	}
+
+	return PSA_SUCCESS;
+}
+#endif
+
 static otError psaToOtError(psa_status_t aStatus)
 {
 	switch (aStatus) {
@@ -144,6 +191,11 @@ otError otPlatCryptoImportKey(otCryptoKeyRef *aKeyRef, otCryptoKeyType aKeyType,
 		return OT_ERROR_INVALID_ARGS;
 	}
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	otCryptoKeyRef originalKeyRef = *aKeyRef;
+	bool returnOriginalKeyRef = false;
+#endif
+
 #if defined(CONFIG_OPENTHREAD_ECDSA)
 	/* Check if key is ECDSA pair and extract private key from it since PSA expects it. */
 	if (aKeyType == OT_CRYPTO_KEY_TYPE_ECDSA) {
@@ -178,6 +230,14 @@ otError otPlatCryptoImportKey(otCryptoKeyRef *aKeyRef, otCryptoKeyType aKeyType,
 	switch (aKeyPersistence) {
 	case OT_CRYPTO_KEY_STORAGE_PERSISTENT:
 		psa_set_key_lifetime(&attributes, PSA_KEY_LIFETIME_PERSISTENT);
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+		psa_status_t psa_status = toKmuSlot(aKeyRef, &attributes);
+		if (psa_status != PSA_SUCCESS) {
+			return psaToOtError(status);
+		}
+		psa_set_key_bits(&attributes, aKeyLen * 8);
+		returnOriginalKeyRef = true;
+#endif
 		psa_set_key_id(&attributes, *aKeyRef);
 		break;
 	case OT_CRYPTO_KEY_STORAGE_VOLATILE:
@@ -188,6 +248,13 @@ otError otPlatCryptoImportKey(otCryptoKeyRef *aKeyRef, otCryptoKeyType aKeyType,
 	status = psa_import_key(&attributes, aKey, aKeyLen, aKeyRef);
 	psa_reset_key_attributes(&attributes);
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	// Return the original aKeyRef
+	if (returnOriginalKeyRef) {
+		*aKeyRef = originalKeyRef;
+	}
+#endif
+
 	return psaToOtError(status);
 }
 
@@ -197,12 +264,18 @@ otError otPlatCryptoExportKey(otCryptoKeyRef aKeyRef, uint8_t *aBuffer, size_t a
 	if (aBuffer == NULL) {
 		return OT_ERROR_INVALID_ARGS;
 	}
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&aKeyRef, NULL);
+#endif
 
 	return psaToOtError(psa_export_key(aKeyRef, aBuffer, aBufferLen, aKeyLen));
 }
 
 otError otPlatCryptoDestroyKey(otCryptoKeyRef aKeyRef)
 {
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&aKeyRef, NULL);
+#endif
 	return psaToOtError(psa_destroy_key(aKeyRef));
 }
 
@@ -211,6 +284,9 @@ bool otPlatCryptoHasKey(otCryptoKeyRef aKeyRef)
 	psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&aKeyRef, NULL);
+#endif
 	status = psa_get_key_attributes(aKeyRef, &attributes);
 	psa_reset_key_attributes(&attributes);
 
@@ -254,7 +330,14 @@ otError otPlatCryptoHmacSha256Start(otCryptoContext *aContext, const otCryptoKey
 	}
 
 	operation = aContext->mContext;
+
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	otCryptoKeyRef tempKey = aKey->mKeyRef;
+	toKmuSlot(&tempKey, NULL);
+	status = psa_mac_sign_setup(operation, tempKey, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+#else
 	status = psa_mac_sign_setup(operation, aKey->mKeyRef, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+#endif
 
 	return psaToOtError(status);
 }
@@ -327,9 +410,16 @@ otError otPlatCryptoAesEncrypt(otCryptoContext *aContext, const uint8_t *aInput,
 	}
 
 	key_ref = aContext->mContext;
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	psa_key_id_t tempKeyRef = *key_ref;
+	toKmuSlot(key_ref, NULL);
+#endif
 	status = psa_cipher_encrypt(*key_ref, PSA_ALG_ECB_NO_PADDING, aInput, block_size, aOutput,
 				    block_size, &cipher_length);
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	memcpy(aContext->mContext, &tempKeyRef, sizeof(psa_key_id_t));
+#endif
 	return psaToOtError(status);
 }
 
@@ -531,6 +621,10 @@ otError otPlatCryptoEcdsaSignUsingKeyRef(otCryptoKeyRef aKeyRef,
 	psa_status_t status;
 	size_t signature_length;
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&aKeyRef, NULL);
+#endif
+
 	status = psa_sign_hash(aKeyRef, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256), aHash->m8,
 			       OT_CRYPTO_SHA256_HASH_SIZE, aSignature->m8,
 			       OT_CRYPTO_ECDSA_SIGNATURE_SIZE, &signature_length);
@@ -549,6 +643,10 @@ otError otPlatCryptoEcdsaVerifyUsingKeyRef(otCryptoKeyRef aKeyRef,
 {
 	psa_status_t status;
 
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&aKeyRef, NULL);
+#endif
+
 	status = psa_verify_hash(aKeyRef, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256), aHash->m8,
 				 OT_CRYPTO_SHA256_HASH_SIZE, aSignature->m8,
 				 OT_CRYPTO_ECDSA_SIGNATURE_SIZE);
@@ -566,6 +664,10 @@ otError otPlatCryptoEcdsaExportPublicKey(otCryptoKeyRef aKeyRef,
 	psa_status_t status;
 	size_t exported_length;
 	uint8_t buffer[1 + OT_CRYPTO_ECDSA_PUBLIC_KEY_SIZE];
+
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&aKeyRef, NULL);
+#endif
 
 	status = psa_export_public_key(aKeyRef, buffer, sizeof(buffer), &exported_length);
 	if (status != PSA_SUCCESS) {
@@ -589,6 +691,9 @@ otError otPlatCryptoEcdsaGenerateAndImportKey(otCryptoKeyRef aKeyRef)
 	psa_set_key_algorithm(&attributes, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256));
 	psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
 	psa_set_key_lifetime(&attributes, PSA_KEY_LIFETIME_PERSISTENT);
+#ifdef CONFIG_OPENTHREAD_USE_KMU
+	toKmuSlot(&key_id, &attributes);
+#endif
 	psa_set_key_id(&attributes, key_id);
 	psa_set_key_bits(&attributes, 256);
 

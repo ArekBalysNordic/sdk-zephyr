@@ -389,3 +389,11 @@ config OPENTHREAD_UPTIME
 
 config OPENTHREAD_VERHOEFF_CHECKSUM
 	bool "Verhoeff checksum"
+
+config OPENTHREAD_USE_KMU
+	bool "Use CRACEN KMU driver for storing security materials"
+	depends on PSA_NEED_CRACEN_KMU_DRIVER
+	help
+	  Store security materials in the CRACEN KMU space instead of PSA ITS.
+	  KMU slots 80-100 are dedicated for OpenThread purposes.
+	  Keys are not encrypted in KMU.
