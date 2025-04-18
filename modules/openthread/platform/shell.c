@@ -15,6 +15,7 @@
 #include <openthread/instance.h>
 
 #include "platform-zephyr.h"
+#include "openthread.h"
 
 #define OT_SHELL_BUFFER_SIZE CONFIG_SHELL_CMD_BUFF_SIZE
 
@@ -74,9 +75,9 @@ static int ot_cmd(const struct shell *sh, size_t argc, char *argv[])
 
 	shell_p = sh;
 
-	openthread_api_mutex_lock(openthread_get_default_context());
+	openthread_mutex_lock();
 	otCliInputLine(rx_buffer);
-	openthread_api_mutex_unlock(openthread_get_default_context());
+	openthread_mutex_unlock();
 
 	return 0;
 }

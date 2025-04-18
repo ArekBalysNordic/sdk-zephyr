@@ -2,7 +2,7 @@
 
 zephyr_library_named(subsys__net__ip__l2__openthread)
 zephyr_library_include_directories(.
-  ${ZEPHYR_BASE}/modules/openthread/platform
+  ${ZEPHYR_BASE}/modules/openthread
   ${ZEPHYR_BASE}/subsys/net/ip)
 zephyr_library_compile_definitions_ifdef(
   CONFIG_NEWLIB_LIBC __LINUX_ERRNO_EXTENSIONS__
